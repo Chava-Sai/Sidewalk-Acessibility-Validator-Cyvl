@@ -59,6 +59,13 @@ Key variables:
 - `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`
 - `VITE_API_BASE_URL` (frontend)
 
+Recommended free-first Groq setup for image analysis:
+
+- `GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct`
+- `GROQ_FALLBACK_MODELS=meta-llama/llama-4-maverick-17b-128e-instruct`
+
+Note: for image input, Groq currently supports the Llama 4 vision models above.
+
 ## Local Run
 
 ### Backend

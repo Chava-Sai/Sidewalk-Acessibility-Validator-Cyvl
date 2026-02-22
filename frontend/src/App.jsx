@@ -346,6 +346,11 @@ function ImageAdvisorTab() {
           placeholder={aiProvider === "groq" ? "meta-llama/llama-4-scout-17b-16e-instruct" : "gemini-3.1-pro-preview"}
           style={{ width: "100%", background: "#0b1220", color: "white", border: "1px solid #334155", borderRadius: 8, padding: 10, marginBottom: 10 }}
         />
+        <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 12 }}>
+          {aiProvider === "groq"
+            ? "Free Groq image models: llama-4-scout (default) and llama-4-maverick."
+            : "Gemini model examples: gemini-3.1-pro-preview or gemini-2.5-flash-lite."}
+        </div>
 
         <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: "#cbd5e1", marginBottom: 12 }}>
           <input type="checkbox" checked={includeRecommendations} onChange={(event) => setIncludeRecommendations(event.target.checked)} />
