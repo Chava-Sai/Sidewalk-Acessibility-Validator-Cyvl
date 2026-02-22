@@ -41,6 +41,7 @@ Publish heavy assets as **GitHub Release assets**:
 - `dataset.zip` (raw dataset)
 - `dataset_masked.zip` (masked dataset)
 - optional model checkpoints (`*.pt`)
+- optional metadata bundle (`pointcloud_coverage.json`, `sam.geojson`, `streetviewImages.geojson`)
 
 This keeps clone/push fast and prevents repository bloat.
 

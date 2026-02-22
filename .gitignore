@@ -36,3 +36,8 @@ venv/
 
 # Local archives
 *.zip
+
+# Optional heavy local artifacts (kept out of Git)
+pointcloud_coverage.json
+sam.geojson
+streetviewImages.geojson
