@@ -31,10 +31,23 @@ GROQ_FALLBACK_MODELS = [
     model.strip()
     for model in os.getenv(
         "GROQ_FALLBACK_MODELS",
-        "meta-llama/llama-4-maverick-17b-128e-instruct",
+        "",
     ).split(",")
     if model.strip()
 ]
+HTTP_USER_AGENT = os.getenv(
+    "HTTP_USER_AGENT",
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/126.0.0.0 Safari/537.36"
+    ),
+).strip()
+JSON_REQUEST_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "User-Agent": HTTP_USER_AGENT or "sidewalk-cyvl/1.0",
+}
 
 
 def resolve_model_path():
@@ -239,7 +252,7 @@ def call_gemini_text(
         request = urllib.request.Request(
             endpoint,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=JSON_REQUEST_HEADERS,
             method="POST",
         )
 
@@ -317,7 +330,7 @@ def call_groq_text(
             "https://api.groq.com/openai/v1/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
             headers={
-                "Content-Type": "application/json",
+                **JSON_REQUEST_HEADERS,
                 "Authorization": f"Bearer {api_key}",
             },
             method="POST",
@@ -329,6 +342,13 @@ def call_groq_text(
         except urllib.error.HTTPError as exc:
             error_text = exc.read().decode("utf-8", errors="ignore")
             lower_error = error_text.lower()
+            if exc.code == 403 and ("1010" in lower_error or "access denied" in lower_error):
+                return (
+                    None,
+                    "Groq blocked this request (403/1010). This is usually network or security filtering. "
+                    "Try another network and verify the API key works with `curl https://api.groq.com/openai/v1/models`.",
+                    model_name,
+                )
             if exc.code in {400, 404} and (
                 "model" in lower_error
                 or "not found" in lower_error

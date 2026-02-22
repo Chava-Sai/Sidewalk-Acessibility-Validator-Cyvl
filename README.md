@@ -62,9 +62,9 @@ Key variables:
 Recommended free-first Groq setup for image analysis:
 
 - `GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct`
-- `GROQ_FALLBACK_MODELS=meta-llama/llama-4-maverick-17b-128e-instruct`
+- `GROQ_FALLBACK_MODELS=`
 
-Note: for image input, Groq currently supports the Llama 4 vision models above.
+Note: use a Groq vision model for image analysis. `llama-4-scout` is the safest default.
 
 ## Local Run
 
@@ -112,6 +112,7 @@ In Image AI Advisor:
 - User can paste API key directly in UI.
 - If API key is empty, backend env key is used (if configured).
 - If no sidewalk is detected, classification summary is skipped.
+- If Groq returns `403/1010`, your network is blocking the request; retry from another network/hotspot.
 
 ## Deployment (Permanent)
 
