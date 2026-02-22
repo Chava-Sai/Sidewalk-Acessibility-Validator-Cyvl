@@ -35,6 +35,11 @@ GROQ_FALLBACK_MODELS = [
     ).split(",")
     if model.strip()
 ]
+DEFAULT_MODEL_URL = (
+    "https://github.com/Chava-Sai/Sidewalk-Acessibility-Validator-Cyvl/"
+    "releases/latest/download/sidewalk_classifier_fair.pt"
+)
+MODEL_URL = os.getenv("MODEL_URL", DEFAULT_MODEL_URL).strip()
 HTTP_USER_AGENT = os.getenv(
     "HTTP_USER_AGENT",
     (
@@ -66,6 +71,30 @@ def resolve_model_path():
 MODEL_PATH = resolve_model_path()
 
 
+def ensure_model_checkpoint(target_path: Path):
+    if target_path.exists():
+        return
+    if not MODEL_URL:
+        return
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Model not found at {target_path}. Attempting auto-download from release asset...")
+    request = urllib.request.Request(
+        MODEL_URL,
+        headers={"User-Agent": HTTP_USER_AGENT or "sidewalk-cyvl/1.0"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            body = response.read()
+        if not body:
+            raise RuntimeError("Downloaded model file was empty.")
+        target_path.write_bytes(body)
+        print(f"Downloaded model checkpoint to {target_path}")
+    except Exception as exc:
+        print(f"Model auto-download failed: {exc}")
+
+
 def make_classifier_transform(img_size: int):
     return transforms.Compose([
         transforms.Resize((img_size, img_size)),
@@ -82,6 +111,12 @@ else:
 
 
 def load_classifier():
+    ensure_model_checkpoint(MODEL_PATH)
+    if not MODEL_PATH.exists():
+        raise FileNotFoundError(
+            f"Model checkpoint not found at {MODEL_PATH}. "
+            "Set MODEL_PATH to a local .pt file or set MODEL_URL to a downloadable checkpoint."
+        )
     checkpoint = torch.load(MODEL_PATH, map_location=CLASSIFIER_DEVICE)
     classes = checkpoint["classes"]
     arch = checkpoint.get("arch", "efficientnet_b2")
@@ -297,7 +332,7 @@ def call_groq_text(
 ):
     api_key = resolve_llm_api_key("groq", api_key_override)
     if not api_key:
-        return None, "Groq key missing. Provide GROQ_API_KEY or enter API key in UI.", None
+        return None, "Llama API key missing. Provide GROQ_API_KEY or enter API key in UI.", None
 
     primary_model = model_override.strip() or GROQ_MODEL
     model_candidates = [primary_model] + GROQ_FALLBACK_MODELS
@@ -345,7 +380,7 @@ def call_groq_text(
             if exc.code == 403 and ("1010" in lower_error or "access denied" in lower_error):
                 return (
                     None,
-                    "Groq blocked this request (403/1010). This is usually network or security filtering. "
+                    "Llama (via Groq) request was blocked (403/1010). This is usually network or security filtering. "
                     "Try another network and verify the API key works with `curl https://api.groq.com/openai/v1/models`.",
                     model_name,
                 )
@@ -357,7 +392,7 @@ def call_groq_text(
             ):
                 last_model_error = error_text[:220]
                 continue
-            return None, f"Groq API error ({exc.code}): {error_text[:220]}", model_name
+            return None, f"Llama/Groq API error ({exc.code}): {error_text[:220]}", model_name
         except Exception as exc:  # pragma: no cover - network/remote failures
             return None, f"Groq request failed: {exc}", model_name
 

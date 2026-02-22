@@ -1,179 +1,108 @@
-# Sidewalk Accessibility Validator (Cyvl)
+# Sidewalk Accessibility Validator (CYVL)
 
-AI-powered sidewalk auditing platform with two modes:
+CYVL is a two-part accessibility project:
 
-1. **Map Audit**: rule-based ADA compliance analysis from street asset data.
-2. **Image AI Advisor**: vision classifier (`Good/Fair/Poor`) + LLM recommendations.
+1. **Map Audit**: rule-based ADA audit on mapped sidewalk assets.
+2. **Image AI Advisor**: predicts `Good / Fair / Poor` and generates improvement guidance.
 
-The default LLM provider is **Groq (free-first)**. Users can switch to **Gemini** and provide their own key in the frontend.
+## Public-Ready Setup (Important)
 
-## Target Repository
+This repo is prepared so **anyone can run it**.
 
-- GitHub: [https://github.com/Chava-Sai/Sidewalk-Acessibility-Validator-Cyvl](https://github.com/Chava-Sai/Sidewalk-Acessibility-Validator-Cyvl)
+- Model checkpoints are **not** committed to Git history.
+- Backend can auto-download the public checkpoint from GitHub Releases using `MODEL_URL`.
+- Users use **their own API key** (no private key is stored in code).
 
-## Core Features
+Default model URL:
 
-- Sidewalk condition classifier using PyTorch checkpoints.
-- Sidewalk presence gate before condition advice.
-- Provider-selectable LLM summary:
-  - `groq` (default, recommended for free testing)
-  - `gemini` (optional)
-- User API key override from frontend (no key committed to repo).
+- `https://github.com/Chava-Sai/Sidewalk-Acessibility-Validator-Cyvl/releases/latest/download/sidewalk_classifier_fair.pt`
 
-## Minimal Project Structure (Important Files)
+## Llama First (Free Tier)
 
-- `main.py` - FastAPI backend (map endpoints + prediction endpoint)
-- `predict.py` - CLI inference helper
+The default AI path is **Llama vision model via Groq**.
+
+- Default model: `meta-llama/llama-4-scout-17b-16e-instruct`
+- Provider value in API: `groq` (this means Llama via Groq)
+
+Get a key and docs:
+
+- Groq API keys: <https://console.groq.com/keys>
+- GroqCloud (start free): <https://groq.com/groqcloud/>
+- Groq rate limits: <https://console.groq.com/docs/rate-limits>
+- Groq vision docs: <https://console.groq.com/docs/vision>
+- Groq models docs: <https://console.groq.com/docs/models>
+
+Gemini is optional and can be selected from the UI.
+
+## Project Structure
+
+- `main.py` - FastAPI backend (map + prediction + AI summary)
+- `frontend/` - React + Vite frontend
 - `train.py`, `train_advanced.py` - training scripts
-- `download_images.py`, `mask_images.py` - dataset preparation scripts
+- `download_images.py`, `mask_images.py` - dataset preparation
 - `requirements.txt` - backend dependencies
-- `frontend/` - Vite + React app
-- `.env.example` - environment variable template
+- `.env.example` - runtime configuration template
+- `images/` - product screenshots
 
-Data and large model files are intentionally excluded from Git.
+## Quick Start (Local)
 
-## Data and Model Distribution Strategy
-
-Do **not** commit heavy artifacts to Git history.
-
-Publish heavy assets as **GitHub Release assets**:
-
-- `dataset.zip` (raw dataset)
-- `dataset_masked.zip` (masked dataset)
-- optional model checkpoints (`*.pt`)
-- optional metadata bundle (`pointcloud_coverage.json`, `sam.geojson`, `streetviewImages.geojson`)
-
-This keeps clone/push fast and prevents repository bloat.
-
-## Environment Variables
-
-Copy `.env.example` and set values in your environment.
-
-Key variables:
-
-- `MODEL_PATH` - classifier checkpoint path
-- `LLM_PROVIDER` - `groq` or `gemini` (default `groq`)
-- `GROQ_API_KEY` - backend default Groq key (optional if user enters key in UI)
-- `GEMINI_API_KEY` - backend default Gemini key (optional if user enters key in UI)
-- `GROQ_MODEL`, `GROQ_FALLBACK_MODELS`
-- `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`
-- `VITE_API_BASE_URL` (frontend)
-
-Recommended free-first Groq setup for image analysis:
-
-- `GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct`
-- `GROQ_FALLBACK_MODELS=`
-
-Note: use a Groq vision model for image analysis. `llama-4-scout` is the safest default.
-
-## Local Run
-
-### Backend
+### 1. Backend
 
 ```bash
-cd /Users/sai/Documents/sidewalk
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+
+# optional but recommended
+export GROQ_API_KEY="your_groq_key"
+
 uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-### Frontend
+### 2. Frontend
 
 ```bash
-cd /Users/sai/Documents/sidewalk/frontend
+cd frontend
 npm install
 echo 'VITE_API_BASE_URL=http://localhost:8001' > .env.local
 npm run dev
 ```
 
-## API Endpoints
+Open: `http://localhost:3000` (or the next free port shown by Vite).
 
-- `GET /sidewalks`
-- `GET /summary`
-- `GET /violations`
-- `POST /predict-sidewalk`
+## Environment Variables
 
-`POST /predict-sidewalk` form fields:
+Copy from `.env.example`:
 
-- `image` (required)
-- `include_gemini` (`true`/`false`) - toggles recommendations
-- `ai_provider` (`groq` or `gemini`)
-- `llm_api_key` (optional user key override)
-- `ai_model` (optional model override)
-- `guidance_prompt` (optional)
-- `enforce_sidewalk_check` (`true`/`false`)
+- `MODEL_PATH` - local `.pt` file path
+- `MODEL_URL` - release asset URL used when `MODEL_PATH` is missing
+- `LLM_PROVIDER` - `groq` (Llama via Groq) or `gemini`
+- `GROQ_API_KEY` - key for Llama via Groq
+- `GROQ_MODEL` - vision model name
+- `GEMINI_API_KEY`, `GEMINI_MODEL` - optional Gemini path
 
-## Frontend Behavior
+## Data + Model Release Strategy
 
-In Image AI Advisor:
+Keep heavy files out of Git history. Upload them as Release assets:
 
-- Provider dropdown defaults to **Groq (Recommended Free)**.
-- User can paste API key directly in UI.
-- If API key is empty, backend env key is used (if configured).
-- If no sidewalk is detected, classification summary is skipped.
-- If Groq returns `403/1010`, your network is blocking the request; retry from another network/hotspot.
+- `dataset.zip`
+- `dataset_masked.zip`
+- `sidewalk_classifier_fair.pt` (public checkpoint)
+
+This keeps cloning fast and still lets everyone run the app.
 
 ## Deployment (Permanent)
 
-### Recommended Architecture
+Recommended architecture:
 
 - **Frontend**: Vercel
-- **Backend**: Render / Railway / Fly.io (persistent URL)
+- **Backend**: Render / Railway / Fly.io
 
-Why: this backend uses PyTorch + GeoPandas + model files, which is not ideal for Vercel serverless limits.
+Why: backend depends on PyTorch + GeoPandas + checkpoint file and is better on a persistent container than serverless limits.
 
-### Cost Guidance
+## Product Screenshots
 
-- You can start on free tiers for testing.
-- Free tiers may sleep or have quotas.
-- For permanent stable production (always on), a paid backend plan is usually required.
+![Image Advisor Upload](images/advisor-upload.jpeg)
+![Llama Settings](images/llama-settings.jpeg)
+![Local Run Commands](images/local-run-commands.jpeg)
 
-### Vercel Setup
-
-- Project root: `frontend`
-- Env var on Vercel: `VITE_API_BASE_URL=https://<your-backend-domain>`
-- Redeploy after env updates.
-
-### Backend Setup (Render/Railway)
-
-- Build command: `pip install -r requirements.txt`
-- Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-- Add env vars from `.env.example`
-- Attach model checkpoint file and set `MODEL_PATH`
-
-## Training Workflow
-
-### Download raw images
-
-```bash
-python download_images.py --mode full --out-dir dataset
-```
-
-### Generate masked images
-
-```bash
-python mask_images.py
-```
-
-### Train advanced model
-
-```bash
-python train_advanced.py \
-  --data-dir dataset_masked \
-  --split-mode fair \
-  --equal-train-per-class \
-  --weighted-sampler \
-  --arch convnext_tiny \
-  --epochs 35 \
-  --batch-size 16 \
-  --num-workers 0 \
-  --model-out sidewalk_classifier_fair.pt \
-  --results-out training_results_fair.json
-```
-
-## Notes
-
-- Keep secrets out of Git.
-- Keep datasets/checkpoints out of Git history.
-- Use Releases for heavy assets.

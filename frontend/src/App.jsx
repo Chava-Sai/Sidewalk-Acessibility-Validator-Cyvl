@@ -241,7 +241,8 @@ function ImageAdvisorTab() {
   const summaryText = result?.ai_summary ?? result?.gemini_summary
   const summaryError = result?.ai_error ?? result?.gemini_error
   const summaryModel = result?.ai_model ?? result?.gemini_model
-  const summaryProvider = (result?.ai_provider || aiProvider || "ai").toUpperCase()
+  const activeProvider = (result?.ai_provider || aiProvider || "ai").toLowerCase()
+  const summaryProvider = activeProvider === "groq" ? "LLAMA" : activeProvider.toUpperCase()
 
   function handleFileChange(event) {
     const file = event.target.files?.[0]
@@ -298,7 +299,7 @@ function ImageAdvisorTab() {
       <div style={{ background: "#111827", border: "1px solid #1f2937", borderRadius: 10, padding: 16, overflowY: "auto" }}>
         <div style={{ fontSize: 18, fontWeight: "bold", color: "#38bdf8", marginBottom: 6 }}>Image AI Advisor</div>
         <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
-          Upload a sidewalk image and get model prediction plus optional AI recommendations. Groq is recommended as free default.
+          Upload a sidewalk image and get model prediction plus optional AI recommendations. Llama is the recommended free default.
         </div>
 
         <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 6 }}>Upload Sidewalk Photo</label>
@@ -323,12 +324,12 @@ function ImageAdvisorTab() {
           onChange={(event) => setAiProvider(event.target.value)}
           style={{ width: "100%", background: "#0b1220", color: "white", border: "1px solid #334155", borderRadius: 8, padding: 10, marginBottom: 10 }}
         >
-          <option value="groq">Groq (Recommended Free)</option>
+          <option value="groq">Llama (Free via Groq)</option>
           <option value="gemini">Gemini</option>
         </select>
 
         <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 6 }}>
-          {aiProvider === "groq" ? "Groq API Key (optional override)" : "Gemini API Key (optional override)"}
+          {aiProvider === "groq" ? "Llama API Key (Groq, optional override)" : "Gemini API Key (optional override)"}
         </label>
         <input
           type="password"
@@ -348,7 +349,7 @@ function ImageAdvisorTab() {
         />
         <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 12 }}>
           {aiProvider === "groq"
-            ? "Use a Groq vision model. Recommended: meta-llama/llama-4-scout-17b-16e-instruct."
+            ? "Use a Llama vision model. Recommended: meta-llama/llama-4-scout-17b-16e-instruct."
             : "Gemini model examples: gemini-3.1-pro-preview or gemini-2.5-flash-lite."}
         </div>
 
