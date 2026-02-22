@@ -1,172 +1,153 @@
-# City Hacks Streetscape Simulation
+# Sidewalk Accessibility Validator (Cyvl)
 
-AI-assisted sidewalk accessibility analysis platform with two integrated workflows:
+AI-powered sidewalk auditing platform with two modes:
 
-1. **Map Audit**: scans GeoJSON sidewalk assets, flags ADA-related violations, and visualizes results on an interactive map.
-2. **Image AI Advisor**: predicts sidewalk condition (`Good`, `Fair`, `Poor`) from an uploaded photo and generates actionable recommendations with Gemini.
+1. **Map Audit**: rule-based ADA compliance analysis from street asset data.
+2. **Image AI Advisor**: vision classifier (`Good/Fair/Poor`) + LLM recommendations.
 
-## Innovation Summary
+The default LLM provider is **Groq (free-first)**. Users can switch to **Gemini** and provide their own key in the frontend.
 
-This project combines:
+## Target Repository
 
-- **Rule-based civic geospatial auditing** (Brookline sidewalk asset data + obstacle checks)
-- **Computer vision quality scoring** (CNN sidewalk-condition classifier)
-- **LLM-grounded recommendations** (Gemini produces structured improvement actions)
-- **Safety gate for bad inputs** (Gemini first verifies a real sidewalk is present; if not, classification is skipped)
+- GitHub: [https://github.com/Chava-Sai/Sidewalk-Acessibility-Validator-Cyvl](https://github.com/Chava-Sai/Sidewalk-Acessibility-Validator-Cyvl)
 
-This makes the output practical for municipal operations: find risky segments on a map, then use image-level AI advice for maintenance actions.
+## Core Features
 
-## Repository
+- Sidewalk condition classifier using PyTorch checkpoints.
+- Sidewalk presence gate before condition advice.
+- Provider-selectable LLM summary:
+  - `groq` (default, recommended for free testing)
+  - `gemini` (optional)
+- User API key override from frontend (no key committed to repo).
 
-- GitHub: [City-hacks-streetscape-simulation](https://github.com/GeesalaPrashanthi/City-hacks-streetscape-simulation)
-- Main app files:
-  - `main.py` (FastAPI backend)
-  - `frontend/src/App.jsx` (React UI, 2 tabs)
-  - `train.py` (baseline training)
-  - `train_advanced.py` (fair/advanced training)
-  - `download_images.py` (dataset ingestion)
-  - `mask_images.py` (sidewalk masking)
+## Minimal Project Structure (Important Files)
 
-## What Is Included vs Excluded
+- `main.py` - FastAPI backend (map endpoints + prediction endpoint)
+- `predict.py` - CLI inference helper
+- `train.py`, `train_advanced.py` - training scripts
+- `download_images.py`, `mask_images.py` - dataset preparation scripts
+- `requirements.txt` - backend dependencies
+- `frontend/` - Vite + React app
+- `.env.example` - environment variable template
 
-Included in Git:
-- source code
-- GeoJSON/metadata files
-- training scripts and result JSONs
-- empty dataset folder structure via `.gitkeep`
+Data and large model files are intentionally excluded from Git.
 
-Excluded from Git (by `.gitignore`):
-- raw dataset images in `dataset/**`
-- masked dataset images in `dataset_masked/**`
-- model checkpoints (`*.pt`, `*.pth`, etc.)
-- local virtual environments and secret env files
+## Data and Model Distribution Strategy
 
-## System Requirements
+Do **not** commit heavy artifacts to Git history.
 
-- Python 3.10+
-- Node.js 18+
-- npm 9+
-- macOS/Linux/Windows (MPS/CUDA/CPU supported by torch)
+Publish heavy assets as **GitHub Release assets**:
 
-## Quick Start
+- `dataset.zip` (raw dataset)
+- `dataset_masked.zip` (masked dataset)
+- optional model checkpoints (`*.pt`)
 
-### 1. Clone
+This keeps clone/push fast and prevents repository bloat.
+
+## Environment Variables
+
+Copy `.env.example` and set values in your environment.
+
+Key variables:
+
+- `MODEL_PATH` - classifier checkpoint path
+- `LLM_PROVIDER` - `groq` or `gemini` (default `groq`)
+- `GROQ_API_KEY` - backend default Groq key (optional if user enters key in UI)
+- `GEMINI_API_KEY` - backend default Gemini key (optional if user enters key in UI)
+- `GROQ_MODEL`, `GROQ_FALLBACK_MODELS`
+- `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`
+- `VITE_API_BASE_URL` (frontend)
+
+## Local Run
+
+### Backend
 
 ```bash
-git clone https://github.com/GeesalaPrashanthi/City-hacks-streetscape-simulation.git
-cd City-hacks-streetscape-simulation
-```
-
-### 2. Backend setup
-
-```bash
+cd /Users/sai/Documents/sidewalk
 python3 -m venv venv
 source venv/bin/activate
-pip install --upgrade pip
-pip install fastapi uvicorn geopandas torch torchvision pillow numpy transformers
-```
-
-If your environment needs full GeoPandas stack support, install with conda/mamba (recommended on some systems).
-
-### 3. Configure environment variables
-
-```bash
-export GEMINI_API_KEY="your_google_ai_studio_key"
-export GEMINI_MODEL="gemini-3.1-pro-preview"
-# optional fallback models (comma-separated)
-export GEMINI_FALLBACK_MODELS="gemini-flash-latest,gemini-2.5-flash-lite"
-
-# optional: choose which checkpoint to load
-export MODEL_PATH="sidewalk_classifier_fair.pt"
-```
-
-### 4. Run backend
-
-```bash
+pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-Backend API will be available at `http://localhost:8001`.
-
-### 5. Run frontend
-
-In a second terminal:
+### Frontend
 
 ```bash
-cd frontend
+cd /Users/sai/Documents/sidewalk/frontend
 npm install
-# optional if backend is not on localhost:8001
-export VITE_API_BASE_URL="http://localhost:8001"
+echo 'VITE_API_BASE_URL=http://localhost:8001' > .env.local
 npm run dev
 ```
 
-Open the local Vite URL shown in terminal.
-
-## App Usage
-
-### Tab 1: Map Audit
-
-- Fetches `/sidewalks` from backend.
-- Displays compliance summary and filtered markers.
-- Shows violations like:
-  - missing sidewalk
-  - poor condition
-  - inaccessible material
-  - nearby obstacle proximity
-
-### Tab 2: Image AI Advisor
-
-Upload an image and click **Analyze Sidewalk**.
-
-Pipeline:
-1. Gemini checks if the image actually contains a sidewalk.
-2. If no sidewalk: classifier is skipped, user gets a clear message.
-3. If sidewalk present: classifier predicts `Good/Fair/Poor` + probabilities.
-4. Gemini returns structured explanation and 3 improvement actions targeted to the predicted class.
-
 ## API Endpoints
 
-- `GET /sidewalks` -> full feature list + summary
-- `GET /summary` -> top-level metrics
-- `GET /violations` -> non-compliant subset
-- `POST /predict-sidewalk` -> image condition prediction + optional Gemini summary
+- `GET /sidewalks`
+- `GET /summary`
+- `GET /violations`
+- `POST /predict-sidewalk`
 
 `POST /predict-sidewalk` form fields:
-- `image` (file, required)
-- `include_gemini` (`true/false`)
-- `guidance_prompt` (optional text)
-- `enforce_sidewalk_check` (`true/false`)
 
-## Data Preparation Workflow
+- `image` (required)
+- `include_gemini` (`true`/`false`) - toggles recommendations
+- `ai_provider` (`groq` or `gemini`)
+- `llm_api_key` (optional user key override)
+- `ai_model` (optional model override)
+- `guidance_prompt` (optional)
+- `enforce_sidewalk_check` (`true`/`false`)
 
-### 1. Download images from GeoJSON
+## Frontend Behavior
+
+In Image AI Advisor:
+
+- Provider dropdown defaults to **Groq (Recommended Free)**.
+- User can paste API key directly in UI.
+- If API key is empty, backend env key is used (if configured).
+- If no sidewalk is detected, classification summary is skipped.
+
+## Deployment (Permanent)
+
+### Recommended Architecture
+
+- **Frontend**: Vercel
+- **Backend**: Render / Railway / Fly.io (persistent URL)
+
+Why: this backend uses PyTorch + GeoPandas + model files, which is not ideal for Vercel serverless limits.
+
+### Cost Guidance
+
+- You can start on free tiers for testing.
+- Free tiers may sleep or have quotas.
+- For permanent stable production (always on), a paid backend plan is usually required.
+
+### Vercel Setup
+
+- Project root: `frontend`
+- Env var on Vercel: `VITE_API_BASE_URL=https://<your-backend-domain>`
+- Redeploy after env updates.
+
+### Backend Setup (Render/Railway)
+
+- Build command: `pip install -r requirements.txt`
+- Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- Add env vars from `.env.example`
+- Attach model checkpoint file and set `MODEL_PATH`
+
+## Training Workflow
+
+### Download raw images
 
 ```bash
 python download_images.py --mode full --out-dir dataset
 ```
 
-Useful options:
-- `--mode balanced` for equal per-class download
-- `--max-per-class N` to cap class count
-- `--skip-existing` (default true)
-
-### 2. Create masked dataset (optional but recommended)
+### Generate masked images
 
 ```bash
 python mask_images.py
 ```
 
-Outputs to `dataset_masked/Good`, `dataset_masked/Fair`, `dataset_masked/Poor`.
-
-## Training
-
-### Baseline training
-
-```bash
-python train.py
-```
-
-### Advanced fair training (recommended)
+### Train advanced model
 
 ```bash
 python train_advanced.py \
@@ -182,27 +163,8 @@ python train_advanced.py \
   --results-out training_results_fair.json
 ```
 
-## Local Prediction (CLI)
+## Notes
 
-```bash
-python predict.py /path/to/image.jpg
-```
-
-Or URL:
-
-```bash
-python predict.py https://example.com/sidewalk.jpg
-```
-
-## Troubleshooting
-
-- **Gemini 429 quota error**: free tier limit reached; wait/reset quota or enable billing.
-- **Gemini 404 model unavailable**: update `GEMINI_MODEL` to a currently available model for your key/project.
-- **Classifier unavailable at startup**: set `MODEL_PATH` to a valid `.pt` checkpoint.
-- **Slow dataloading or worker issues on macOS**: use `--num-workers 0`.
-
-## Notes for Contributors
-
-- Do not commit `dataset/**`, `dataset_masked/**`, or checkpoint files.
-- Keep only `.gitkeep` placeholders in dataset class folders.
-- Use environment variables for all secrets.
+- Keep secrets out of Git.
+- Keep datasets/checkpoints out of Git history.
+- Use Releases for heavy assets.

@@ -33,3 +33,6 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# Local archives
+*.zip

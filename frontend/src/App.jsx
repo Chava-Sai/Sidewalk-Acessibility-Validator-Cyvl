@@ -220,7 +220,10 @@ function ImageAdvisorTab() {
   const [imageFile, setImageFile] = useState(null)
   const [previewUrl, setPreviewUrl] = useState("")
   const [guidancePrompt, setGuidancePrompt] = useState("")
-  const [includeGemini, setIncludeGemini] = useState(true)
+  const [includeRecommendations, setIncludeRecommendations] = useState(true)
+  const [aiProvider, setAiProvider] = useState("groq")
+  const [llmApiKey, setLlmApiKey] = useState("")
+  const [aiModel, setAiModel] = useState("")
   const [result, setResult] = useState(null)
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
@@ -235,6 +238,10 @@ function ImageAdvisorTab() {
     if (!result?.probabilities) return []
     return Object.entries(result.probabilities).sort((a, b) => b[1] - a[1])
   }, [result])
+  const summaryText = result?.ai_summary ?? result?.gemini_summary
+  const summaryError = result?.ai_error ?? result?.gemini_error
+  const summaryModel = result?.ai_model ?? result?.gemini_model
+  const summaryProvider = (result?.ai_provider || aiProvider || "ai").toUpperCase()
 
   function handleFileChange(event) {
     const file = event.target.files?.[0]
@@ -262,7 +269,10 @@ function ImageAdvisorTab() {
 
     const formData = new FormData()
     formData.append("image", imageFile)
-    formData.append("include_gemini", String(includeGemini))
+    formData.append("include_gemini", String(includeRecommendations))
+    formData.append("ai_provider", aiProvider)
+    formData.append("llm_api_key", llmApiKey.trim())
+    formData.append("ai_model", aiModel.trim())
     formData.append("guidance_prompt", guidancePrompt)
     formData.append("enforce_sidewalk_check", "true")
 
@@ -288,7 +298,7 @@ function ImageAdvisorTab() {
       <div style={{ background: "#111827", border: "1px solid #1f2937", borderRadius: 10, padding: 16, overflowY: "auto" }}>
         <div style={{ fontSize: 18, fontWeight: "bold", color: "#38bdf8", marginBottom: 6 }}>Image AI Advisor</div>
         <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
-          Upload a sidewalk image and get model prediction plus optional Gemini recommendations.
+          Upload a sidewalk image and get model prediction plus optional AI recommendations. Groq is recommended as free default.
         </div>
 
         <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 6 }}>Upload Sidewalk Photo</label>
@@ -307,9 +317,39 @@ function ImageAdvisorTab() {
           style={{ width: "100%", background: "#0b1220", color: "white", border: "1px solid #334155", borderRadius: 8, padding: 10, resize: "vertical", marginBottom: 10 }}
         />
 
+        <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 6 }}>AI Provider</label>
+        <select
+          value={aiProvider}
+          onChange={(event) => setAiProvider(event.target.value)}
+          style={{ width: "100%", background: "#0b1220", color: "white", border: "1px solid #334155", borderRadius: 8, padding: 10, marginBottom: 10 }}
+        >
+          <option value="groq">Groq (Recommended Free)</option>
+          <option value="gemini">Gemini</option>
+        </select>
+
+        <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 6 }}>
+          {aiProvider === "groq" ? "Groq API Key (optional override)" : "Gemini API Key (optional override)"}
+        </label>
+        <input
+          type="password"
+          value={llmApiKey}
+          onChange={(event) => setLlmApiKey(event.target.value)}
+          placeholder={aiProvider === "groq" ? "gsk_..." : "AIza..."}
+          style={{ width: "100%", background: "#0b1220", color: "white", border: "1px solid #334155", borderRadius: 8, padding: 10, marginBottom: 10 }}
+        />
+
+        <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 6 }}>AI Model (optional override)</label>
+        <input
+          type="text"
+          value={aiModel}
+          onChange={(event) => setAiModel(event.target.value)}
+          placeholder={aiProvider === "groq" ? "meta-llama/llama-4-scout-17b-16e-instruct" : "gemini-3.1-pro-preview"}
+          style={{ width: "100%", background: "#0b1220", color: "white", border: "1px solid #334155", borderRadius: 8, padding: 10, marginBottom: 10 }}
+        />
+
         <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: "#cbd5e1", marginBottom: 12 }}>
-          <input type="checkbox" checked={includeGemini} onChange={(event) => setIncludeGemini(event.target.checked)} />
-          Include Gemini recommendations
+          <input type="checkbox" checked={includeRecommendations} onChange={(event) => setIncludeRecommendations(event.target.checked)} />
+          Include AI recommendations
         </label>
 
         <button
@@ -396,25 +436,25 @@ function ImageAdvisorTab() {
             )}
 
             <div style={{ background: "#0b1220", border: "1px solid #1f2937", borderRadius: 10, padding: 14 }}>
-              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>Gemini Summary</div>
-              {result.gemini_model && (
+              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>{summaryProvider} Summary</div>
+              {summaryModel && (
                 <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>
-                  Model: {result.gemini_model}
+                  Model: {summaryModel}
                 </div>
               )}
-              {result.gemini_summary && (
+              {summaryText && (
                 <div style={{ fontSize: 14, lineHeight: 1.6, color: "#e2e8f0", whiteSpace: "pre-wrap" }}>
-                  {result.gemini_summary}
+                  {summaryText}
                 </div>
               )}
-              {!result.gemini_summary && result.gemini_error && (
+              {!summaryText && summaryError && (
                 <div style={{ fontSize: 13, color: "#fbbf24" }}>
-                  {result.gemini_error}
+                  {summaryError}
                 </div>
               )}
-              {!result.gemini_summary && !result.gemini_error && (
+              {!summaryText && !summaryError && (
                 <div style={{ fontSize: 13, color: "#64748b" }}>
-                  Gemini was skipped for this analysis.
+                  AI summary was skipped for this analysis.
                 </div>
               )}
             </div>

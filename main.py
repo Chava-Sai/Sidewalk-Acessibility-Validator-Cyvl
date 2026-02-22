@@ -19,10 +19,20 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 IMG_SIZE_DEFAULT = 224
+LLM_PROVIDER_DEFAULT = os.getenv("LLM_PROVIDER", "groq").strip().lower()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview").strip()
 GEMINI_FALLBACK_MODELS = [
     model.strip()
     for model in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-flash-latest,gemini-2.5-flash-lite").split(",")
+    if model.strip()
+]
+GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct").strip()
+GROQ_FALLBACK_MODELS = [
+    model.strip()
+    for model in os.getenv(
+        "GROQ_FALLBACK_MODELS",
+        "meta-llama/llama-4-maverick-17b-128e-instruct",
+    ).split(",")
     if model.strip()
 ]
 
@@ -112,7 +122,7 @@ def predict_sidewalk_quality(image_bytes: bytes):
     return predicted_class, confidence, probabilities
 
 
-def build_gemini_prompt(predicted_class: str, confidence: float, probabilities: dict, custom_prompt: str):
+def build_advisor_prompt(predicted_class: str, confidence: float, probabilities: dict, custom_prompt: str):
     sorted_probs = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
     prob_text = ", ".join([f"{label}={score * 100:.1f}%" for label, score in sorted_probs])
     confidence_pct = confidence * 100.0
@@ -165,20 +175,42 @@ def extract_json_object(text: str):
     return None
 
 
+def normalize_llm_provider(provider: str):
+    value = (provider or "").strip().lower()
+    if value in {"groq", "gemini"}:
+        return value
+    return LLM_PROVIDER_DEFAULT if LLM_PROVIDER_DEFAULT in {"groq", "gemini"} else "groq"
+
+
+def resolve_llm_api_key(provider: str, api_key_override: str):
+    override_key = (api_key_override or "").strip()
+    if override_key:
+        return override_key
+
+    if provider == "gemini":
+        return os.getenv("GEMINI_API_KEY", "").strip()
+    if provider == "groq":
+        return os.getenv("GROQ_API_KEY", "").strip()
+    return ""
+
+
 def call_gemini_text(
     image_bytes: bytes,
     image_mime_type: str,
     prompt: str,
+    api_key_override: str = "",
+    model_override: str = "",
     max_output_tokens: int = 320,
     temperature: float = 0.3,
 ):
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    api_key = resolve_llm_api_key("gemini", api_key_override)
     if not api_key:
-        return None, "Set GEMINI_API_KEY to enable Gemini recommendations.", None
+        return None, "Gemini key missing. Provide GEMINI_API_KEY or enter API key in UI.", None
 
-    model_candidates = [GEMINI_MODEL] + GEMINI_FALLBACK_MODELS
+    primary_model = model_override.strip() or GEMINI_MODEL
+    model_candidates = [primary_model] + GEMINI_FALLBACK_MODELS
     tried_models = []
-    last_404_error = ""
+    last_model_error = ""
 
     payload = {
         "contents": [{
@@ -216,8 +248,8 @@ def call_gemini_text(
                 body = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             error_text = exc.read().decode("utf-8", errors="ignore")
-            if exc.code == 404:
-                last_404_error = error_text[:220]
+            if exc.code in {400, 404}:
+                last_model_error = error_text[:220]
                 continue
             return None, f"Gemini API error ({exc.code}): {error_text[:220]}", model_name
         except Exception as exc:  # pragma: no cover - network/remote failures
@@ -236,9 +268,131 @@ def call_gemini_text(
 
     return (
         None,
-        f"No available Gemini model for this key/project. Tried: {', '.join(tried_models)}. Last 404: {last_404_error}",
+        f"No available Gemini model for this key/project. Tried: {', '.join(tried_models)}. Last model error: {last_model_error}",
         None,
     )
+
+
+def call_groq_text(
+    image_bytes: bytes,
+    image_mime_type: str,
+    prompt: str,
+    api_key_override: str = "",
+    model_override: str = "",
+    max_output_tokens: int = 320,
+    temperature: float = 0.3,
+):
+    api_key = resolve_llm_api_key("groq", api_key_override)
+    if not api_key:
+        return None, "Groq key missing. Provide GROQ_API_KEY or enter API key in UI.", None
+
+    primary_model = model_override.strip() or GROQ_MODEL
+    model_candidates = [primary_model] + GROQ_FALLBACK_MODELS
+    tried_models = []
+    last_model_error = ""
+    image_mime = image_mime_type or "image/jpeg"
+    image_data_uri = f"data:{image_mime};base64,{base64.b64encode(image_bytes).decode('utf-8')}"
+
+    for model_name in model_candidates:
+        if not model_name or model_name in tried_models:
+            continue
+        tried_models.append(model_name)
+
+        payload = {
+            "model": model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_data_uri}},
+                    ],
+                }
+            ],
+            "temperature": temperature,
+            "max_completion_tokens": max_output_tokens,
+        }
+
+        request = urllib.request.Request(
+            "https://api.groq.com/openai/v1/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=45) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            error_text = exc.read().decode("utf-8", errors="ignore")
+            lower_error = error_text.lower()
+            if exc.code in {400, 404} and (
+                "model" in lower_error
+                or "not found" in lower_error
+                or "does not exist" in lower_error
+                or "unsupported" in lower_error
+            ):
+                last_model_error = error_text[:220]
+                continue
+            return None, f"Groq API error ({exc.code}): {error_text[:220]}", model_name
+        except Exception as exc:  # pragma: no cover - network/remote failures
+            return None, f"Groq request failed: {exc}", model_name
+
+        choices = body.get("choices") or []
+        if not choices:
+            return None, "Groq returned no response choices.", model_name
+
+        message = choices[0].get("message") or {}
+        content = (message.get("content") or "").strip()
+        if not content:
+            return None, "Groq returned an empty response.", model_name
+
+        return content, None, model_name
+
+    return (
+        None,
+        f"No available Groq model for this key/project. Tried: {', '.join(tried_models)}. Last model error: {last_model_error}",
+        None,
+    )
+
+
+def call_llm_text(
+    provider: str,
+    image_bytes: bytes,
+    image_mime_type: str,
+    prompt: str,
+    api_key_override: str = "",
+    model_override: str = "",
+    max_output_tokens: int = 320,
+    temperature: float = 0.3,
+):
+    normalized = normalize_llm_provider(provider)
+    if normalized == "gemini":
+        return call_gemini_text(
+            image_bytes=image_bytes,
+            image_mime_type=image_mime_type,
+            prompt=prompt,
+            api_key_override=api_key_override,
+            model_override=model_override,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+        )
+
+    if normalized == "groq":
+        return call_groq_text(
+            image_bytes=image_bytes,
+            image_mime_type=image_mime_type,
+            prompt=prompt,
+            api_key_override=api_key_override,
+            model_override=model_override,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+        )
+
+    return None, f"Unsupported AI provider: {provider}", None
 
 
 def validate_summary_payload(payload: dict, predicted_class: str, confidence: float):
@@ -362,12 +516,21 @@ def build_sidewalk_presence_prompt():
     )
 
 
-def detect_sidewalk_presence(image_bytes: bytes, image_mime_type: str):
+def detect_sidewalk_presence(
+    image_bytes: bytes,
+    image_mime_type: str,
+    ai_provider: str,
+    llm_api_key: str = "",
+    ai_model: str = "",
+):
     prompt = build_sidewalk_presence_prompt()
-    text, error, model = call_gemini_text(
+    text, error, model = call_llm_text(
+        provider=ai_provider,
         image_bytes=image_bytes,
         image_mime_type=image_mime_type,
         prompt=prompt,
+        api_key_override=llm_api_key,
+        model_override=ai_model,
         max_output_tokens=120,
         temperature=0.0,
     )
@@ -394,17 +557,23 @@ def detect_sidewalk_presence(image_bytes: bytes, image_mime_type: str):
     }, None, model
 
 
-def call_gemini_summary(
+def call_ai_summary(
     image_bytes: bytes,
     image_mime_type: str,
     prompt: str,
     predicted_class: str,
     confidence: float,
+    ai_provider: str,
+    llm_api_key: str = "",
+    ai_model: str = "",
 ):
-    text, error, model = call_gemini_text(
-        image_bytes,
-        image_mime_type,
-        prompt,
+    text, error, model = call_llm_text(
+        provider=ai_provider,
+        image_bytes=image_bytes,
+        image_mime_type=image_mime_type,
+        prompt=prompt,
+        api_key_override=llm_api_key,
+        model_override=ai_model,
         max_output_tokens=520,
         temperature=0.2,
     )
@@ -421,10 +590,13 @@ def call_gemini_summary(
         prompt
         + "\n\nCRITICAL: Your previous response was invalid. Return ONLY one valid JSON object matching the schema."
     )
-    retry_text, retry_error, retry_model = call_gemini_text(
-        image_bytes,
-        image_mime_type,
-        retry_prompt,
+    retry_text, retry_error, retry_model = call_llm_text(
+        provider=ai_provider,
+        image_bytes=image_bytes,
+        image_mime_type=image_mime_type,
+        prompt=retry_prompt,
+        api_key_override=llm_api_key,
+        model_override=ai_model,
         max_output_tokens=520,
         temperature=0.1,
     )
@@ -439,7 +611,7 @@ def call_gemini_summary(
         return format_summary_payload(retry_validated), None, final_model
 
     fallback = fallback_summary_text(predicted_class, confidence)
-    return fallback, "Gemini response was incomplete; used fallback summary template.", final_model
+    return fallback, "AI response was incomplete; used fallback summary template.", final_model
 
 
 try:
@@ -594,6 +766,9 @@ def get_violations():
 async def predict_sidewalk(
     image: UploadFile = File(...),
     include_gemini: bool = Form(True),
+    ai_provider: str = Form(LLM_PROVIDER_DEFAULT),
+    llm_api_key: str = Form(""),
+    ai_model: str = Form(""),
     guidance_prompt: str = Form(""),
     enforce_sidewalk_check: bool = Form(True),
 ):
@@ -604,10 +779,11 @@ async def predict_sidewalk(
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    gemini_summary = None
-    gemini_error = None
+    normalized_provider = normalize_llm_provider(ai_provider)
+    ai_summary = None
+    ai_error = None
     prompt_used = ""
-    gemini_model_used = None
+    ai_model_used = None
     sidewalk_check = {
         "checked": False,
         "has_sidewalk": None,
@@ -620,7 +796,13 @@ async def predict_sidewalk(
 
     if enforce_sidewalk_check:
         sidewalk_check["checked"] = True
-        check_result, check_error, check_model = detect_sidewalk_presence(image_bytes, image.content_type)
+        check_result, check_error, check_model = detect_sidewalk_presence(
+            image_bytes=image_bytes,
+            image_mime_type=image.content_type,
+            ai_provider=normalized_provider,
+            llm_api_key=llm_api_key,
+            ai_model=ai_model,
+        )
         sidewalk_check["model"] = check_model
 
         if check_result is None:
@@ -632,8 +814,8 @@ async def predict_sidewalk(
 
             if not check_result["has_sidewalk"]:
                 classification_skipped = True
-                gemini_model_used = check_model
-                gemini_summary = (
+                ai_model_used = check_model
+                ai_summary = (
                     "No sidewalk detected in this image, so Good/Fair/Poor classification was skipped. "
                     "Upload a real street-side sidewalk photo to get condition scoring and improvement guidance."
                 )
@@ -643,22 +825,30 @@ async def predict_sidewalk(
                     "probabilities": {},
                     "classification_skipped": classification_skipped,
                     "sidewalk_check": sidewalk_check,
-                    "gemini_summary": gemini_summary,
-                    "gemini_error": gemini_error,
-                    "gemini_model": gemini_model_used,
+                    "ai_provider": normalized_provider,
+                    "ai_summary": ai_summary,
+                    "ai_error": ai_error,
+                    "ai_model": ai_model_used,
+                    "ai_prompt": prompt_used,
+                    "gemini_summary": ai_summary,
+                    "gemini_error": ai_error,
+                    "gemini_model": ai_model_used,
                     "gemini_prompt": prompt_used,
                 }
 
     predicted_class, confidence, probabilities = predict_sidewalk_quality(image_bytes)
 
     if include_gemini:
-        prompt_used = build_gemini_prompt(predicted_class, confidence, probabilities, guidance_prompt)
-        gemini_summary, gemini_error, gemini_model_used = call_gemini_summary(
-            image_bytes,
-            image.content_type,
-            prompt_used,
-            predicted_class,
-            confidence,
+        prompt_used = build_advisor_prompt(predicted_class, confidence, probabilities, guidance_prompt)
+        ai_summary, ai_error, ai_model_used = call_ai_summary(
+            image_bytes=image_bytes,
+            image_mime_type=image.content_type,
+            prompt=prompt_used,
+            predicted_class=predicted_class,
+            confidence=confidence,
+            ai_provider=normalized_provider,
+            llm_api_key=llm_api_key,
+            ai_model=ai_model,
         )
 
     return {
@@ -667,8 +857,13 @@ async def predict_sidewalk(
         "probabilities": probabilities,
         "classification_skipped": classification_skipped,
         "sidewalk_check": sidewalk_check,
-        "gemini_summary": gemini_summary,
-        "gemini_error": gemini_error,
-        "gemini_model": gemini_model_used,
+        "ai_provider": normalized_provider,
+        "ai_summary": ai_summary,
+        "ai_error": ai_error,
+        "ai_model": ai_model_used,
+        "ai_prompt": prompt_used,
+        "gemini_summary": ai_summary,
+        "gemini_error": ai_error,
+        "gemini_model": ai_model_used,
         "gemini_prompt": prompt_used,
     }
