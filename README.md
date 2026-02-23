@@ -1,5 +1,9 @@
 # Sidewalk Accessibility Validator (CYVL)
 
+> [!IMPORTANT]
+> **For full AI results, an API key is required.**
+> The project runs without a key, but complete Image AI Advisor behavior (sidewalk presence check + detailed LLM guidance) works properly only when you provide a valid key (Llama via Groq or Gemini).
+
 CYVL is a two-part accessibility project:
 
 1. **Map Audit**: rule-based ADA audit on mapped sidewalk assets.
@@ -53,7 +57,7 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# optional but recommended
+# required for full Image AI Advisor output
 export GROQ_API_KEY="your_groq_key"
 
 uvicorn main:app --host 0.0.0.0 --port 8001 --reload
@@ -105,4 +109,3 @@ Why: backend depends on PyTorch + GeoPandas + checkpoint file and is better on a
 ![Image Advisor Upload](images/advisor-upload.jpeg)
 ![Llama Settings](images/llama-settings.jpeg)
 ![Local Run Commands](images/local-run-commands.jpeg)
-
