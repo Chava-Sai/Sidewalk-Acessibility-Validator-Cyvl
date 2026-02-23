@@ -8,13 +8,9 @@ import urllib.request
 from io import BytesIO
 from pathlib import Path
 
-import geopandas as gpd
-import torch
-import torch.nn as nn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
-from torchvision import models, transforms
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -98,29 +94,65 @@ def ensure_model_checkpoint(target_path: Path):
 
 
 def make_classifier_transform(img_size: int):
+    runtime = get_torch_runtime()
+    transforms = runtime["transforms"]
     return transforms.Compose([
         transforms.Resize((img_size, img_size)),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
 
-if torch.cuda.is_available():
-    CLASSIFIER_DEVICE = "cuda"
-elif torch.backends.mps.is_available():
-    CLASSIFIER_DEVICE = "mps"
-else:
-    CLASSIFIER_DEVICE = "cpu"
+TORCH_RUNTIME = None
+TORCH_RUNTIME_LOCK = threading.Lock()
+CLASSIFIER_DEVICE = "cpu"
 
 CLASSIFIER_MODEL = None
 CLASSIFIER_CLASSES = []
 CLASSIFIER_ARCH = ""
 CLASSIFIER_IMG_SIZE = IMG_SIZE_DEFAULT
-CLASSIFIER_TF = make_classifier_transform(CLASSIFIER_IMG_SIZE)
+CLASSIFIER_TF = None
 CLASSIFIER_LOAD_ERROR = ""
 CLASSIFIER_LOCK = threading.Lock()
 
 
+def get_torch_runtime():
+    global TORCH_RUNTIME
+    if TORCH_RUNTIME is not None:
+        return TORCH_RUNTIME
+
+    with TORCH_RUNTIME_LOCK:
+        if TORCH_RUNTIME is not None:
+            return TORCH_RUNTIME
+
+        import torch
+        import torch.nn as nn
+        from torchvision import models, transforms
+
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+
+        TORCH_RUNTIME = {
+            "torch": torch,
+            "nn": nn,
+            "models": models,
+            "transforms": transforms,
+            "device": device,
+        }
+        return TORCH_RUNTIME
+
+
 def load_classifier():
+    runtime = get_torch_runtime()
+    torch = runtime["torch"]
+    nn = runtime["nn"]
+    models = runtime["models"]
+    global CLASSIFIER_DEVICE
+    CLASSIFIER_DEVICE = runtime["device"]
+
     ensure_model_checkpoint(MODEL_PATH)
     if not MODEL_PATH.exists():
         raise FileNotFoundError(
@@ -180,14 +212,14 @@ def ensure_classifier_loaded():
             CLASSIFIER_CLASSES = []
             CLASSIFIER_ARCH = ""
             CLASSIFIER_IMG_SIZE = IMG_SIZE_DEFAULT
-            CLASSIFIER_TF = make_classifier_transform(CLASSIFIER_IMG_SIZE)
+            CLASSIFIER_TF = None
             CLASSIFIER_LOAD_ERROR = str(exc)
             print(f"Classifier unavailable: {CLASSIFIER_LOAD_ERROR}")
 
 
 def predict_sidewalk_quality(image_bytes: bytes):
     ensure_classifier_loaded()
-    if CLASSIFIER_MODEL is None:
+    if CLASSIFIER_MODEL is None or CLASSIFIER_TF is None:
         raise HTTPException(status_code=503, detail=f"Classifier unavailable: {CLASSIFIER_LOAD_ERROR}")
 
     try:
@@ -195,6 +227,8 @@ def predict_sidewalk_quality(image_bytes: bytes):
     except UnidentifiedImageError as exc:
         raise HTTPException(status_code=400, detail="Uploaded file is not a valid image.") from exc
 
+    runtime = get_torch_runtime()
+    torch = runtime["torch"]
     tensor = CLASSIFIER_TF(image).unsqueeze(0).to(CLASSIFIER_DEVICE)
     with torch.no_grad():
         logits = CLASSIFIER_MODEL(tensor)
@@ -738,6 +772,8 @@ def find_obstacles(sidewalk_utm, obstacles_utm):
     return result
 
 def analyze_sidewalks():
+    import geopandas as gpd
+
     print("Loading Brookline data...")
     assets = gpd.read_file("aboveGroundAssets.geojson")
     assets_utm = assets.to_crs("EPSG:32619")
