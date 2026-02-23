@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import re
+import threading
 import urllib.error
 import urllib.request
 from io import BytesIO
@@ -40,6 +41,7 @@ DEFAULT_MODEL_URL = (
     "releases/latest/download/sidewalk_classifier_fair.pt"
 )
 MODEL_URL = os.getenv("MODEL_URL", DEFAULT_MODEL_URL).strip()
+SIDEWALK_CACHE_PATH = Path(os.getenv("SIDEWALK_CACHE_PATH", "sidewalk_results_cache.json").strip())
 HTTP_USER_AGENT = os.getenv(
     "HTTP_USER_AGENT",
     (
@@ -109,6 +111,14 @@ elif torch.backends.mps.is_available():
 else:
     CLASSIFIER_DEVICE = "cpu"
 
+CLASSIFIER_MODEL = None
+CLASSIFIER_CLASSES = []
+CLASSIFIER_ARCH = ""
+CLASSIFIER_IMG_SIZE = IMG_SIZE_DEFAULT
+CLASSIFIER_TF = make_classifier_transform(CLASSIFIER_IMG_SIZE)
+CLASSIFIER_LOAD_ERROR = ""
+CLASSIFIER_LOCK = threading.Lock()
+
 
 def load_classifier():
     ensure_model_checkpoint(MODEL_PATH)
@@ -148,7 +158,35 @@ def load_classifier():
     return model, classes, arch, img_size
 
 
+def ensure_classifier_loaded():
+    global CLASSIFIER_MODEL, CLASSIFIER_CLASSES, CLASSIFIER_ARCH, CLASSIFIER_IMG_SIZE, CLASSIFIER_TF, CLASSIFIER_LOAD_ERROR
+
+    if CLASSIFIER_MODEL is not None:
+        return
+
+    with CLASSIFIER_LOCK:
+        if CLASSIFIER_MODEL is not None:
+            return
+        try:
+            CLASSIFIER_MODEL, CLASSIFIER_CLASSES, CLASSIFIER_ARCH, CLASSIFIER_IMG_SIZE = load_classifier()
+            CLASSIFIER_TF = make_classifier_transform(CLASSIFIER_IMG_SIZE)
+            CLASSIFIER_LOAD_ERROR = ""
+            print(
+                f"Loaded model: {MODEL_PATH} | Arch: {CLASSIFIER_ARCH} | "
+                f"Classes: {CLASSIFIER_CLASSES} | ImgSize: {CLASSIFIER_IMG_SIZE} | Device: {CLASSIFIER_DEVICE}"
+            )
+        except Exception as exc:  # pragma: no cover - startup environment issue
+            CLASSIFIER_MODEL = None
+            CLASSIFIER_CLASSES = []
+            CLASSIFIER_ARCH = ""
+            CLASSIFIER_IMG_SIZE = IMG_SIZE_DEFAULT
+            CLASSIFIER_TF = make_classifier_transform(CLASSIFIER_IMG_SIZE)
+            CLASSIFIER_LOAD_ERROR = str(exc)
+            print(f"Classifier unavailable: {CLASSIFIER_LOAD_ERROR}")
+
+
 def predict_sidewalk_quality(image_bytes: bytes):
+    ensure_classifier_loaded()
     if CLASSIFIER_MODEL is None:
         raise HTTPException(status_code=503, detail=f"Classifier unavailable: {CLASSIFIER_LOAD_ERROR}")
 
@@ -669,31 +707,24 @@ def call_ai_summary(
     return fallback, "AI response was incomplete; used fallback summary template.", final_model
 
 
-try:
-    CLASSIFIER_MODEL, CLASSIFIER_CLASSES, CLASSIFIER_ARCH, CLASSIFIER_IMG_SIZE = load_classifier()
-    CLASSIFIER_TF = make_classifier_transform(CLASSIFIER_IMG_SIZE)
-    CLASSIFIER_LOAD_ERROR = ""
-    print(
-        f"Loaded model: {MODEL_PATH} | Arch: {CLASSIFIER_ARCH} | "
-        f"Classes: {CLASSIFIER_CLASSES} | ImgSize: {CLASSIFIER_IMG_SIZE} | Device: {CLASSIFIER_DEVICE}"
-    )
-except Exception as exc:  # pragma: no cover - startup environment issue
-    CLASSIFIER_MODEL = None
-    CLASSIFIER_CLASSES = []
-    CLASSIFIER_ARCH = ""
-    CLASSIFIER_IMG_SIZE = IMG_SIZE_DEFAULT
-    CLASSIFIER_TF = make_classifier_transform(CLASSIFIER_IMG_SIZE)
-    CLASSIFIER_LOAD_ERROR = str(exc)
-    print(f"Classifier unavailable: {CLASSIFIER_LOAD_ERROR}")
-
-print("Loading Brookline data...")
-assets = gpd.read_file("aboveGroundAssets.geojson")
-assets_utm = assets.to_crs("EPSG:32619")
-print(f"Loaded {len(assets)} assets")
-
 OBSTACLE_TYPES = ["BIKE_RACK", "TRASH_BIN", "UTILITY_POLE", "PLANTER", "CABINET", "BOX", "HYDRANT", "SIGNAL_POLE"]
 INACCESSIBLE_MATERIALS = ["Gravel"]
 POOR_MATERIALS = ["Brick"]
+SIDEWALK_RESULTS = []
+SUMMARY = {
+    "total": 0,
+    "compliant": 0,
+    "non_compliant": 0,
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "missing_sidewalk": 0,
+    "poor_condition": 0,
+    "obstructed": 0,
+    "compliance_rate": 0.0,
+}
+SIDEWALK_LOAD_ERROR = ""
+SIDEWALK_LOCK = threading.Lock()
 
 def find_obstacles(sidewalk_utm, obstacles_utm):
     nearby = obstacles_utm[obstacles_utm.geometry.distance(sidewalk_utm.geometry) < 2.0]
@@ -707,6 +738,11 @@ def find_obstacles(sidewalk_utm, obstacles_utm):
     return result
 
 def analyze_sidewalks():
+    print("Loading Brookline data...")
+    assets = gpd.read_file("aboveGroundAssets.geojson")
+    assets_utm = assets.to_crs("EPSG:32619")
+    print(f"Loaded {len(assets)} assets")
+
     sidewalks_utm = assets_utm[assets_utm['asset_type'] == 'SIDEWALK'].copy()
     obstacles_utm = assets_utm[assets_utm['asset_type'].isin(OBSTACLE_TYPES)]
     sidewalks_orig = assets[assets['asset_type'] == 'SIDEWALK']
@@ -778,41 +814,104 @@ def analyze_sidewalks():
     print("Analysis complete!")
     return results
 
-print("Running sidewalk analysis...")
-SIDEWALK_RESULTS = analyze_sidewalks()
 
-compliant = sum(1 for s in SIDEWALK_RESULTS if s['ada_compliant'])
-critical = sum(1 for s in SIDEWALK_RESULTS if s['severity'] == 'critical')
-high = sum(1 for s in SIDEWALK_RESULTS if s['severity'] == 'high')
-medium = sum(1 for s in SIDEWALK_RESULTS if s['severity'] == 'medium')
-missing = sum(1 for s in SIDEWALK_RESULTS if s['sidewalk_type'] == 'No Sidewalk')
-poor_condition = sum(1 for s in SIDEWALK_RESULTS if s['condition'] == 'Poor')
-obstructed = sum(1 for s in SIDEWALK_RESULTS if s['obstacle_count'] > 0)
+def build_summary(sidewalk_results):
+    if not sidewalk_results:
+        return {
+            "total": 0,
+            "compliant": 0,
+            "non_compliant": 0,
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "missing_sidewalk": 0,
+            "poor_condition": 0,
+            "obstructed": 0,
+            "compliance_rate": 0.0,
+        }
 
-SUMMARY = {
-    "total": len(SIDEWALK_RESULTS),
-    "compliant": compliant,
-    "non_compliant": len(SIDEWALK_RESULTS) - compliant,
-    "critical": critical,
-    "high": high,
-    "medium": medium,
-    "missing_sidewalk": missing,
-    "poor_condition": poor_condition,
-    "obstructed": obstructed,
-    "compliance_rate": round(compliant / len(SIDEWALK_RESULTS) * 100, 1)
-}
-print(f"Summary: {SUMMARY}")
+    compliant = sum(1 for s in sidewalk_results if s['ada_compliant'])
+    critical = sum(1 for s in sidewalk_results if s['severity'] == 'critical')
+    high = sum(1 for s in sidewalk_results if s['severity'] == 'high')
+    medium = sum(1 for s in sidewalk_results if s['severity'] == 'medium')
+    missing = sum(1 for s in sidewalk_results if s['sidewalk_type'] == 'No Sidewalk')
+    poor_condition = sum(1 for s in sidewalk_results if s['condition'] == 'Poor')
+    obstructed = sum(1 for s in sidewalk_results if s['obstacle_count'] > 0)
+    total = len(sidewalk_results)
+
+    return {
+        "total": total,
+        "compliant": compliant,
+        "non_compliant": total - compliant,
+        "critical": critical,
+        "high": high,
+        "medium": medium,
+        "missing_sidewalk": missing,
+        "poor_condition": poor_condition,
+        "obstructed": obstructed,
+        "compliance_rate": round(compliant / total * 100, 1),
+    }
+
+
+def ensure_sidewalk_data_loaded():
+    global SIDEWALK_RESULTS, SUMMARY, SIDEWALK_LOAD_ERROR
+
+    if SIDEWALK_RESULTS:
+        return
+
+    with SIDEWALK_LOCK:
+        if SIDEWALK_RESULTS:
+            return
+
+        if SIDEWALK_CACHE_PATH.exists():
+            try:
+                cached = json.loads(SIDEWALK_CACHE_PATH.read_text())
+                cached_results = cached.get("sidewalks") or []
+                cached_summary = cached.get("summary") or build_summary(cached_results)
+                SIDEWALK_RESULTS = cached_results
+                SUMMARY = cached_summary
+                SIDEWALK_LOAD_ERROR = ""
+                print(f"Loaded sidewalk cache from {SIDEWALK_CACHE_PATH} ({len(SIDEWALK_RESULTS)} sidewalks)")
+                return
+            except Exception as exc:
+                print(f"Failed to load sidewalk cache ({SIDEWALK_CACHE_PATH}): {exc}")
+
+        try:
+            print("Running sidewalk analysis...")
+            SIDEWALK_RESULTS = analyze_sidewalks()
+            SUMMARY = build_summary(SIDEWALK_RESULTS)
+            SIDEWALK_LOAD_ERROR = ""
+            print(f"Summary: {SUMMARY}")
+            try:
+                SIDEWALK_CACHE_PATH.write_text(json.dumps({"sidewalks": SIDEWALK_RESULTS, "summary": SUMMARY}))
+                print(f"Saved sidewalk cache to {SIDEWALK_CACHE_PATH}")
+            except Exception as exc:
+                print(f"Could not save sidewalk cache: {exc}")
+        except Exception as exc:
+            SIDEWALK_RESULTS = []
+            SUMMARY = build_summary(SIDEWALK_RESULTS)
+            SIDEWALK_LOAD_ERROR = str(exc)
+            print(f"Sidewalk analysis unavailable: {SIDEWALK_LOAD_ERROR}")
 
 @app.get("/sidewalks")
 def get_sidewalks():
+    ensure_sidewalk_data_loaded()
+    if SIDEWALK_LOAD_ERROR and not SIDEWALK_RESULTS:
+        raise HTTPException(status_code=503, detail=f"Sidewalk analysis unavailable: {SIDEWALK_LOAD_ERROR}")
     return {"sidewalks": SIDEWALK_RESULTS, "summary": SUMMARY}
 
 @app.get("/summary")
 def get_summary():
+    ensure_sidewalk_data_loaded()
+    if SIDEWALK_LOAD_ERROR and not SIDEWALK_RESULTS:
+        raise HTTPException(status_code=503, detail=f"Sidewalk analysis unavailable: {SIDEWALK_LOAD_ERROR}")
     return SUMMARY
 
 @app.get("/violations")
 def get_violations():
+    ensure_sidewalk_data_loaded()
+    if SIDEWALK_LOAD_ERROR and not SIDEWALK_RESULTS:
+        raise HTTPException(status_code=503, detail=f"Sidewalk analysis unavailable: {SIDEWALK_LOAD_ERROR}")
     violations = [s for s in SIDEWALK_RESULTS if not s['ada_compliant']]
     return {"violations": violations, "count": len(violations)}
 

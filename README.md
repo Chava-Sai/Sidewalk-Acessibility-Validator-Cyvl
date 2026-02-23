@@ -47,6 +47,7 @@ Gemini is optional and can be selected from the UI.
 - `download_images.py`, `mask_images.py` - dataset preparation
 - `requirements.txt` - backend dependencies
 - `.env.example` - runtime configuration template
+- `sidewalk_results_cache.json` - precomputed map audit cache for faster cloud cold starts
 - `images/` - product screenshots
 
 ## Quick Start (Local)
@@ -81,6 +82,7 @@ Copy from `.env.example`:
 
 - `MODEL_PATH` - local `.pt` file path
 - `MODEL_URL` - release asset URL used when `MODEL_PATH` is missing
+- `SIDEWALK_CACHE_PATH` - path to precomputed map-analysis cache JSON
 - `LLM_PROVIDER` - `groq` (Llama via Groq) or `gemini`
 - `GROQ_API_KEY` - key for Llama via Groq
 - `GROQ_MODEL` - vision model name
