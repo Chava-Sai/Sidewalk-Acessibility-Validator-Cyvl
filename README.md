@@ -31,6 +31,7 @@ The default AI path is **Llama vision model via Groq**.
 Get a key and docs:
 
 - Groq API keys: <https://console.groq.com/keys>
+- Gemini API keys (Google AI Studio): <https://aistudio.google.com/api-keys>
 - GroqCloud (start free): <https://groq.com/groqcloud/>
 - Groq rate limits: <https://console.groq.com/docs/rate-limits>
 - Groq vision docs: <https://console.groq.com/docs/vision>
