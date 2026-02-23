@@ -163,11 +163,20 @@ function MapAuditTab({ data, filter, setFilter, selected, setSelected }) {
         <MapContainer center={[42.3318, -71.1212]} zoom={14} style={{ height: "100%", width: "100%" }}>
           <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" attribution="© OpenStreetMap © CARTO" />
           {filtered.map((s, i) => {
-            const coords = s.geometry.coordinates
-            const isLine = s.geometry.type === "LineString"
-            const midCoord = isLine ? coords[Math.floor(coords.length / 2)] : coords
-            const lat = midCoord[1]
-            const lng = midCoord[0]
+            let lat = typeof s.lat === "number" ? s.lat : null
+            let lng = typeof s.lng === "number" ? s.lng : null
+
+            // Backward compatibility for older payloads with full geometry.
+            if (lat === null || lng === null) {
+              const coords = s.geometry?.coordinates
+              const isLine = s.geometry?.type === "LineString"
+              if (coords) {
+                const midCoord = isLine ? coords[Math.floor(coords.length / 2)] : coords
+                lat = midCoord?.[1]
+                lng = midCoord?.[0]
+              }
+            }
+            if (typeof lat !== "number" || typeof lng !== "number") return null
             const color = severityColor(s.severity)
 
             return (

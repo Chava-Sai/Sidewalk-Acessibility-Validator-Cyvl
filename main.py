@@ -788,6 +788,33 @@ def analyze_sidewalks():
 
     for idx, row in sidewalks_utm.iterrows():
         orig = sidewalks_orig.loc[idx]
+        geom = orig.geometry
+        lat = None
+        lng = None
+        try:
+            geom_type = getattr(geom, "geom_type", "")
+            if geom_type == "LineString":
+                coords = list(geom.coords)
+                if coords:
+                    mid = coords[len(coords) // 2]
+                    lng, lat = float(mid[0]), float(mid[1])
+            elif geom_type == "MultiLineString":
+                geoms = list(geom.geoms)
+                if geoms:
+                    primary = max(geoms, key=lambda g: g.length)
+                    coords = list(primary.coords)
+                    if coords:
+                        mid = coords[len(coords) // 2]
+                        lng, lat = float(mid[0]), float(mid[1])
+            elif geom_type == "Point":
+                lng, lat = float(geom.x), float(geom.y)
+            else:
+                centroid = geom.centroid
+                lng, lat = float(centroid.x), float(centroid.y)
+        except Exception:
+            lat = None
+            lng = None
+
         sidewalk_type = str(row.get('Type', 'Sidewalk'))
         condition = str(row.get('condition', 'Unknown'))
         material = str(row.get('Material', 'Unknown'))
@@ -835,7 +862,8 @@ def analyze_sidewalks():
 
         results.append({
             "feature_id": str(row.get('feature_id', idx)),
-            "geometry": orig.geometry.__geo_interface__,
+            "lat": lat,
+            "lng": lng,
             "sidewalk_type": sidewalk_type,
             "condition": condition,
             "material": material,
