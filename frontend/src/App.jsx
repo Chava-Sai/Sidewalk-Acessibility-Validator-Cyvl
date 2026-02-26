@@ -524,6 +524,9 @@ export default function App() {
         >
           Image AI Advisor
         </button>
+        <div style={{ marginLeft: "auto", fontSize: 12, color: "#94a3b8" }}>
+          Developed by Srinivasa Sai
+        </div>
       </div>
 
       <div style={{ flex: 1, minHeight: 0 }}>
