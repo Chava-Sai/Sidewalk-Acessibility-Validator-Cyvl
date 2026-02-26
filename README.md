@@ -9,6 +9,12 @@ CYVL is a two-part accessibility project:
 1. **Map Audit**: rule-based ADA audit on mapped sidewalk assets.
 2. **Image AI Advisor**: predicts `Good / Fair / Poor` and generates improvement guidance.
 
+## Final Live Deployment
+
+- Frontend (Vercel): `https://sidewalk-acessibility-validator-cyv.vercel.app/`
+- Backend API (Hugging Face Space): `https://srinivasasai-sidewalk-backend-hf.hf.space`
+- Backend summary health check: `https://srinivasasai-sidewalk-backend-hf.hf.space/summary`
+
 ## Public-Ready Setup (Important)
 
 This repo is prepared so **anyone can run it**.
@@ -100,12 +106,16 @@ This keeps cloning fast and still lets everyone run the app.
 
 ## Deployment (Permanent)
 
-Recommended architecture:
+Current production architecture:
 
 - **Frontend**: Vercel
-- **Backend**: Render / Railway / Fly.io
+- **Backend**: Hugging Face Space (Docker, free CPU tier)
 
-Why: backend depends on PyTorch + GeoPandas + checkpoint file and is better on a persistent container than serverless limits.
+Why this setup:
+
+- Avoids Render free-tier memory crashes during model inference.
+- Keeps frontend globally fast on Vercel.
+- Keeps backend in a container with enough free RAM for PyTorch + model checkpoint.
 
 ## Product Screenshots
 
